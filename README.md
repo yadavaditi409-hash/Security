@@ -1,111 +1,3 @@
-# Security
-const GetAll = () => {
-  const { securityType } = useParams();
-  const [securities, setSecurities] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const navigate = useNavigate();
-  
-  const fetchLock = useRef("");
-
-  const displayColumns = [
-    { key: "SecurityId", label: "Security ID" },
-    { key: "SecurityName", label: "Security Name" },
-    { key: "AssetType", label: "Asset Type" },
-    { key: "Isin", label: "ISIN" },
-    { key: "IssueDate", label: "Issue Date" }
-  ];
-
-  useEffect(() => {
-    if (fetchLock.current === securityType) return;
-    const controller = new AbortController();
-
-    const fetchData = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await axios.get(`https://localhost:7236/api/${securityType}`, {
-          signal: controller.signal
-        });
-        setSecurities(res.data);
-        fetchLock.current = securityType;
-      } catch (err) {
-        if (axios.isCancel(err)) return;
-        setError(`Failed to load ${securityType}.`);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-    return () => controller.abort();
-  }, [securityType]);
-
-  const handleRowClick = (item) => {
-    // Try all possible casing for the ID field
-    const id = item.SecurityId ?? item.securityId ?? item.id ?? item.SecurityID;
-    if (id !== undefined && id !== null) {
-      navigate(`/DisplaySecurity/${securityType}/${id}`);
-    } else {
-      console.error("Could not find ID in item:", item);
-    }
-  };
-
-  return (
-    <div className="p-8 font-sans">
-      <button onClick={() => navigate(-1)} className="mb-4 text-blue-600 hover:underline flex items-center gap-1">
-        <span>←</span> Back
-      </button>
-      <h2 className="text-xl font-bold mb-4 border-b pb-2">All {securityType} Records</h2>
-      
-      {error && <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 mb-4">{error}</div>}
-
-      {loading ? <p>Loading...</p> : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
-          <table className="w-full border-collapse bg-white text-sm">
-            <thead className="bg-gray-100">
-              <tr>
-                {displayColumns.map(col => (
-                  <th key={col.key} className="border-b p-3 text-left font-semibold text-gray-700 uppercase tracking-tight">
-                    {col.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {securities.map((item, idx) => (
-                <tr 
-                  key={idx} 
-                  onClick={() => handleRowClick(item)}
-                  className="hover:bg-blue-50 cursor-pointer transition-colors"
-                >
-                  {displayColumns.map(col => {
-                    const value = item[col.key] ?? item[col.key.toLowerCase()] ?? item[col.key.charAt(0).toLowerCase() + col.key.slice(1)];
-                    return (
-                      <td key={col.key} className="p-3 text-gray-600">
-                        {col.key === "IssueDate" && value 
-                          ? new Date(value).toLocaleDateString() 
-                          : String(value ?? '—')}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {!loading && securities.length === 0 && !error && (
-            <div className="p-10 text-center text-gray-400">No records found.</div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
-
-
-
-
-
 const DisplayingASecurity = () => {
   const { securityType, id } = useParams();
   const navigate = useNavigate();
@@ -126,33 +18,37 @@ const DisplayingASecurity = () => {
     return "text";
   };
 
-  // 1. Fetch Tabs First
+  // 1. Fetch tabs first to get a valid tabId
   useEffect(() => {
     const fetchTabs = async () => {
       try {
         const res = await axios.get(`https://localhost:7236/api/Security/tabs/${securityType}`);
         setTabs(res.data);
+        // Default to first tab (tabId 1) if available
         if (res.data.length > 0) setSelectedTab(res.data[0].tabId);
       } catch (err) {
-        setError("Could not load security metadata.");
+        setError("Could not load security tabs.");
       }
     };
     fetchTabs();
   }, [securityType]);
 
-  // 2. Load Attribute & Data according to (sectype, id, tabid)
+  // 2. Fetch data based on securityType, id, and selectedTab
   useEffect(() => {
-    if (selectedTab) {
+    if (selectedTab && id) {
       const fetchTabData = async () => {
         setLoading(true);
+        setError(null);
         try {
-          // Fetch attributes and security values for the specific tab
           const [attrRes, dataRes] = await Promise.all([
             axios.get(`https://localhost:7236/api/security/attributes/${securityType}/${selectedTab}`),
             axios.get(`https://localhost:7236/api/security/viewsecuritybyid/${securityType}/${id}/${selectedTab}`)
           ]);
           setAttributes(attrRes.data);
-          setTabData(dataRes.data);
+          setTabData(dataRes.data || {});
+          // Clear patch data when changing tabs
+          setPatchData({});
+          setIsEditing(false);
         } catch (e) {
           setError("Failed to load data for this tab.");
         } finally {
@@ -170,10 +66,7 @@ const DisplayingASecurity = () => {
     
     if (type === "number" && val !== "") val = parseFloat(val);
 
-    // Update local display state
     setTabData(prev => ({ ...prev, [cleanKey]: val }));
-    
-    // Add to patchData object for the final submit
     setPatchData(prev => ({ ...prev, [cleanKey]: val }));
   };
 
@@ -185,7 +78,6 @@ const DisplayingASecurity = () => {
 
     try {
       setLoading(true);
-      // Patching the collected changed attributes to the DB
       await axios.patch(`https://localhost:7236/api/${securityType}/${id}`, patchData);
       
       setPatchData({});
@@ -198,11 +90,13 @@ const DisplayingASecurity = () => {
         setTimeout(() => successMsg.classList.add('hidden'), 3000);
       }
     } catch (err) {
-      setError("Update failed. Please verify the connection or data format.");
+      setError("Update failed. Check if all required fields are present.");
     } finally {
       setLoading(false);
     }
   };
+
+  if (!id) return <div className="p-10 text-center text-red-500">Error: No Security ID provided.</div>;
 
   return (
     <div className="p-8 font-sans max-w-6xl mx-auto">
@@ -211,28 +105,28 @@ const DisplayingASecurity = () => {
       </div>
 
       <div className="flex justify-between items-center mb-6">
-        <button onClick={() => navigate(-1)} className="text-blue-600 hover:underline flex items-center gap-2">
-          <span>←</span> Back to list
+        <button onClick={() => navigate(-1)} className="text-blue-600 hover:underline flex items-center gap-2 font-medium">
+          ← Back to List
         </button>
         <div className="flex gap-3">
           {!isEditing ? (
             <button 
               onClick={() => setIsEditing(true)} 
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-bold shadow transition-all"
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-bold shadow-sm"
             >
-              Edit Security
+              Edit Details
             </button>
           ) : (
             <>
               <button 
                 onClick={() => { setIsEditing(false); setPatchData({}); }} 
-                className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-6 py-2 rounded-lg font-bold transition-all"
+                className="bg-gray-100 text-gray-700 px-6 py-2 rounded-lg font-bold"
               >
                 Cancel
               </button>
               <button 
                 onClick={handleUpdate} 
-                className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-bold shadow transition-all"
+                className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-bold shadow-sm"
               >
                 {loading ? "Saving..." : "Submit Changes"}
               </button>
@@ -245,25 +139,19 @@ const DisplayingASecurity = () => {
         <h2 className="text-3xl font-extrabold text-gray-800 mb-1">
           {tabData.SecurityName || tabData.securityName || 'Security Details'}
         </h2>
-        <p className="text-gray-400 text-sm font-mono">{securityType.toUpperCase()} ID: {id}</p>
+        <p className="text-gray-400 text-sm font-mono tracking-tight">System ID: {id}</p>
       </div>
 
-      {error && (
-        <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded-r">
-          <p>{error}</p>
-        </div>
-      )}
+      {error && <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded shadow-sm">{error}</div>}
 
       {/* Tabs Navigation */}
       <div className="flex gap-1 mb-6 border-b overflow-x-auto bg-gray-50 p-1 rounded-t-lg">
         {tabs.map(t => (
           <button 
             key={t.tabId} 
-            onClick={() => { setSelectedTab(t.tabId); setPatchData({}); setIsEditing(false); }}
-            className={`px-6 py-3 text-sm font-bold rounded-lg transition-all ${
-              selectedTab === t.tabId 
-                ? 'bg-white text-blue-600 shadow-sm' 
-                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+            onClick={() => setSelectedTab(t.tabId)}
+            className={`px-6 py-3 text-sm font-bold rounded-lg transition-all whitespace-nowrap ${
+              selectedTab === t.tabId ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-100'
             }`}
           >
             {t.tabName}
@@ -274,7 +162,7 @@ const DisplayingASecurity = () => {
       {/* Attributes Content Area */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 bg-white p-8 border rounded-b-xl shadow-sm min-h-[300px]">
         {loading ? (
-          <div className="col-span-full text-center text-gray-400">Loading tab data...</div>
+          <div className="col-span-full text-center text-gray-400 py-20">Fetching security details...</div>
         ) : attributes.length > 0 ? attributes.map(attr => {
           const cleanKey = attr.replace(/\s+/g, "");
           const value = tabData[cleanKey] ?? tabData[cleanKey.charAt(0).toLowerCase() + cleanKey.slice(1)] ?? "";
@@ -282,19 +170,17 @@ const DisplayingASecurity = () => {
 
           return (
             <div key={attr} className="flex flex-col">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">
-                {attr}
-              </label>
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{attr}</label>
               {isEditing ? (
                 <input 
                   type={type}
                   value={type !== "checkbox" ? (type === 'date' && value ? value.split('T')[0] : value) : undefined}
                   checked={type === "checkbox" ? !!value : undefined}
                   onChange={(e) => handleChange(e, attr)}
-                  className="p-3 border-2 border-gray-100 rounded-lg focus:border-blue-500 outline-none w-full bg-blue-50/20 font-medium text-gray-700"
+                  className="p-3 border-2 border-gray-100 rounded-lg focus:border-blue-500 outline-none w-full bg-blue-50/10"
                 />
               ) : (
-                <div className="text-base text-gray-800 font-semibold py-1">
+                <div className="text-base text-gray-800 font-semibold py-1 border-b border-gray-50">
                   {type === "checkbox" ? (
                     <span className={`px-2 py-0.5 rounded text-xs ${value ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
                       {value ? "✓ Yes" : "✗ No"}
@@ -309,9 +195,7 @@ const DisplayingASecurity = () => {
             </div>
           );
         }) : (
-          <div className="col-span-full flex items-center justify-center text-gray-300 italic">
-            No fields found for this section.
-          </div>
+          <div className="col-span-full text-center text-gray-300 italic">No attributes found for this section.</div>
         )}
       </div>
     </div>
