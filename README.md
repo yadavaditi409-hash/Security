@@ -1,4 +1,110 @@
 # Security
+const GetAll = () => {
+  const { securityType } = useParams();
+  const [securities, setSecurities] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const navigate = useNavigate();
+  
+  const fetchLock = useRef("");
+
+  const displayColumns = [
+    { key: "SecurityId", label: "Security ID" },
+    { key: "SecurityName", label: "Security Name" },
+    { key: "AssetType", label: "Asset Type" },
+    { key: "Isin", label: "ISIN" },
+    { key: "IssueDate", label: "Issue Date" }
+  ];
+
+  useEffect(() => {
+    if (fetchLock.current === securityType) return;
+    const controller = new AbortController();
+
+    const fetchData = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await axios.get(`https://localhost:7236/api/${securityType}`, {
+          signal: controller.signal
+        });
+        setSecurities(res.data);
+        fetchLock.current = securityType;
+      } catch (err) {
+        if (axios.isCancel(err)) return;
+        setError(`Failed to load ${securityType}.`);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+    return () => controller.abort();
+  }, [securityType]);
+
+  const handleRowClick = (item) => {
+    // Try all possible casing for the ID field
+    const id = item.SecurityId ?? item.securityId ?? item.id ?? item.SecurityID;
+    if (id !== undefined && id !== null) {
+      navigate(`/DisplaySecurity/${securityType}/${id}`);
+    } else {
+      console.error("Could not find ID in item:", item);
+    }
+  };
+
+  return (
+    <div className="p-8 font-sans">
+      <button onClick={() => navigate(-1)} className="mb-4 text-blue-600 hover:underline flex items-center gap-1">
+        <span>←</span> Back
+      </button>
+      <h2 className="text-xl font-bold mb-4 border-b pb-2">All {securityType} Records</h2>
+      
+      {error && <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 mb-4">{error}</div>}
+
+      {loading ? <p>Loading...</p> : (
+        <div className="overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
+          <table className="w-full border-collapse bg-white text-sm">
+            <thead className="bg-gray-100">
+              <tr>
+                {displayColumns.map(col => (
+                  <th key={col.key} className="border-b p-3 text-left font-semibold text-gray-700 uppercase tracking-tight">
+                    {col.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {securities.map((item, idx) => (
+                <tr 
+                  key={idx} 
+                  onClick={() => handleRowClick(item)}
+                  className="hover:bg-blue-50 cursor-pointer transition-colors"
+                >
+                  {displayColumns.map(col => {
+                    const value = item[col.key] ?? item[col.key.toLowerCase()] ?? item[col.key.charAt(0).toLowerCase() + col.key.slice(1)];
+                    return (
+                      <td key={col.key} className="p-3 text-gray-600">
+                        {col.key === "IssueDate" && value 
+                          ? new Date(value).toLocaleDateString() 
+                          : String(value ?? '—')}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!loading && securities.length === 0 && !error && (
+            <div className="p-10 text-center text-gray-400">No records found.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+
+
 
 const DisplayingASecurity = () => {
   const { securityType, id } = useParams();
